@@ -1,12 +1,18 @@
 import './App.css';
 import { useState, useEffect } from 'react';
 import detectEthereumProvider from '@metamask/detect-provider';
-import { fromHex, toHex, toUtf8 } from '@cosmjs/encoding';
+import { fromBase64, fromHex, toHex, toUtf8 } from '@cosmjs/encoding';
 import { keccak256, ripemd160, sha256 } from '@cosmjs/crypto';
 import * as secp256k1 from '@noble/secp256k1';
 import bech32 from 'bech32';
-import { AminoSignResponse, StdSignDoc, coins, encodeSecp256k1Signature } from '@cosmjs/amino';
-import { AminoMsgSend } from '@cosmjs/stargate';
+import { AminoSignResponse, StdSignDoc, coins, encodeSecp256k1Pubkey, encodeSecp256k1Signature } from '@cosmjs/amino';
+import { AminoMsgSend, AminoTypes, createDefaultAminoConverters,  defaultRegistryTypes as defaultStargateTypes } from '@cosmjs/stargate';
+import { CosmWasmClient, createWasmAminoConverters, wasmTypes } from '@cosmjs/cosmwasm-stargate';
+import { TxRaw } from 'cosmjs-types/cosmos/tx/v1beta1/tx';
+import { Registry, TxBodyEncodeObject, encodePubkey, makeAuthInfoBytes } from '@cosmjs/proto-signing';
+import { SignMode } from 'cosmjs-types/cosmos/tx/signing/v1beta1/signing';
+import { Int53 } from '@cosmjs/math';
+import {  connectComet } from '@cosmjs/tendermint-rpc';
 
 export function sortObject(obj: any): any {
   if (typeof obj !== 'object' || obj === null) {
@@ -84,14 +90,38 @@ const App = () => {
   const initialState = { accounts: [] };
   const [wallet, setWallet] = useState(initialState);
   const [amount, setAmount] = useState('1000000');
-  const [signedMessage, setSignedMessage] = useState('');
+  // const [signedMessage, setSignedMessage] = useState('');
+  const [cosmosAddress, setCosmosAddress] = useState('')
+  const [targetBalance, setTargetBalance] = useState<object>({});
+  const [balance, setBalance] = useState<object>({});
+  const [pubkey, setPubkey] = useState<Uint8Array| undefined>(undefined);
+  const [registry, setRegistry] = useState<Registry | undefined>(undefined);
+  const [aminoTypes, setAminoTypes] = useState<AminoTypes| undefined>(undefined);
 
   useEffect(() => {
     const getProvider = async () => {
       const provider = await detectEthereumProvider({ silent: true });
       setHasProvider(Boolean(provider));
     };
+    const getBalanceTarget = async() => {
+      const client = await CosmWasmClient.connect("http://localhost:26657/")
+      const balance = await client.getBalance('orai1cnza7u4g9nwl5algvjfzwdlry2gk8andwgh4q8', 'orai').catch(()=>{
+        return {amount: '0', denom: 'orai'}
+      })
+      setTargetBalance(balance);
+    }
+    setAminoTypes(
+     new AminoTypes({
+        ...createDefaultAminoConverters(),
+        ...createWasmAminoConverters(),
+      })
+    );
 
+    setRegistry(
+      new Registry([...defaultStargateTypes, ...wasmTypes])
+    );
+
+    getBalanceTarget();
     getProvider();
   }, []);
 
@@ -100,7 +130,7 @@ const App = () => {
   };
 
   const handleConnect = async () => {
-    let accounts = await window.ethereum.request({
+    const accounts = await window.ethereum.request({
       method: 'eth_requestAccounts'
     });
     updateWallet(accounts);
@@ -115,28 +145,37 @@ const App = () => {
       params: [msgToSign, wallet.accounts[0]]
     }))!.toString();
 
-    const pubkey = getPubkey(rawMsg, sigResult);
-    window.alert(pubkeyToAddress(pubkey));
+    setPubkey(getPubkey(rawMsg, sigResult));
+    setCosmosAddress(pubkeyToAddress(getPubkey(rawMsg, sigResult)));
+
+    const client = await CosmWasmClient.connect("http://localhost:26657/")
+    const balance = await client.getBalance(pubkeyToAddress(getPubkey(rawMsg, sigResult)), 'orai').catch(()=>{
+        return {amount: '0', denom: 'orai'}
+      })
+      setBalance(balance);
   };
 
   const signMessage = async (ethProvider: any, ethAddress: string) => {
+    const client = await CosmWasmClient.connect("http://localhost:26657/")
+    const { accountNumber, sequence } = await client.getSequence(cosmosAddress);
+    const chainId = await client.getChainId();
     const signDoc: StdSignDoc = {
-      chain_id: 'Oraichain',
-      account_number: '0', // Must be 0
-      sequence: '0', // Must be 0
+      chain_id: chainId,
+      account_number: accountNumber.toString(), // Must be 0
+      sequence: sequence.toString(), // Must be 0
       fee: {
         amount: coins('1000', 'orai'),
-        gas: '0.01' // Must be 1
+        gas: '1000000' // Must be 1
       },
       msgs: [
         {
           type: 'cosmos-sdk/MsgSend',
           value: {
-            from_address: 'orai1jzgs4ws43pzphn7gqtkg03c53jpllkqm0jakq4',
-            to_address: 'orai1jzgs4ws43pzphn7gqtkg03c53jpllkqm0jakq4',
+            from_address: cosmosAddress,
+            to_address: 'orai1cnza7u4g9nwl5algvjfzwdlry2gk8andwgh4q8',
             amount: coins(amount, 'orai')
           }
-        } as AminoMsgSend
+        } as AminoMsgSend 
       ],
       memo: ''
     };
@@ -146,9 +185,53 @@ const App = () => {
 
   const signTransferMessage = async () => {
     const ethAddress = wallet.accounts[0];
-    const message = await signMessage(window.ethereum, ethAddress);
-    setSignedMessage(JSON.stringify(message, null, 2));
+    return await signMessage(window.ethereum, ethAddress);
+    // setSignedMessage(JSON.stringify(message, null, 2));
   };
+
+  const transferOrai = async() => {
+    const {signed, signature} =  await signTransferMessage();
+    console.log(signature.signature);
+
+    if(!aminoTypes || !registry) {
+      throw new Error('AminoTypes and Registry are required')
+    }
+
+    const signMode = SignMode.SIGN_MODE_EIP_191;
+
+    const signedTxBody: TxBodyEncodeObject = {
+      typeUrl: "/cosmos.tx.v1beta1.TxBody",
+      value: {
+        messages: signed.msgs.map((msg) => aminoTypes.fromAmino(msg)),
+        memo: signed.memo,
+      },
+    };
+    const signedTxBodyBytes = registry.encode(signedTxBody);
+    const signedGasLimit = Int53.fromString(signed.fee.gas).toNumber();
+    const signedSequence = Int53.fromString(signed.sequence).toNumber();
+    if(!pubkey) {
+      throw new Error('Pubkey is required')
+    }
+    const any_pubkey = encodePubkey(encodeSecp256k1Pubkey(pubkey));
+
+    const signedAuthInfoBytes = makeAuthInfoBytes(
+      [{ pubkey:any_pubkey, sequence: signedSequence }],
+      signed.fee.amount,
+      signedGasLimit,
+      signed.fee.granter,
+      signed.fee.payer,
+      signMode,
+    );
+    const txRaw =  TxRaw.fromPartial({
+      bodyBytes: signedTxBodyBytes,
+      authInfoBytes: signedAuthInfoBytes,
+      signatures: [fromBase64(signature.signature)],
+    });
+    const txBytes = TxRaw.encode(txRaw).finish();
+    const commet = await connectComet("http://localhost:26657/")
+    const response = await commet.broadcastTxSync({ tx:txBytes });
+    console.log(response)
+  }
 
   return (
     <div className="App">
@@ -158,7 +241,7 @@ const App = () => {
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <button onClick={handleConnect}>Connect MetaMask</button>
           {wallet.accounts.length > 0 && <button onClick={showOraiAddress}>Show Orai Address</button>}
-          {wallet.accounts.length > 0 && <button onClick={signTransferMessage}>Sign Transfer Message</button>}
+          {wallet.accounts.length > 0 && <button onClick={transferOrai}>Transfer</button>}
 
           <label>
             Amount: <input value={amount} onChange={(e) => setAmount(e.target.value)} />
@@ -167,7 +250,10 @@ const App = () => {
       )}
 
       {wallet.accounts.length > 0 && <div>Wallet Accounts: {wallet.accounts[0]}</div>}
-      {signedMessage && <pre>Signed Message: {signedMessage}</pre>}
+      {cosmosAddress && <div>CosmosAccount: {cosmosAddress} </div>}
+      {balance && <div>Balance: {JSON.stringify(balance)} </div>}
+      {targetBalance && <div>TargetAddress:orai1cnza7u4g9nwl5algvjfzwdlry2gk8andwgh4q8 </div>}
+      {targetBalance && <div>TargetBalance: {JSON.stringify(targetBalance)} </div>}
     </div>
   );
 };
