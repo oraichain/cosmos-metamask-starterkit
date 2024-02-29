@@ -17,7 +17,7 @@ function pubkeyToAddress(pubkey: Uint8Array, prefix: string = 'orai'): string {
   return bech32.encode(prefix, bech32.toWords(ripemd160(sha256(pubkey))));
 }
 
-const signAmino = async (ethProvider: any, ethAddress: string, signDoc: StdSignDoc): Promise<AminoSignResponse> => {
+const signEip191 = async (ethProvider: any, ethAddress: string, signDoc: StdSignDoc): Promise<AminoSignResponse> => {
   const rawMsg = serializeSignDoc(signDoc);
   const msgToSign = `0x${toHex(rawMsg)}`;
   console.log('msgToSign', msgToSign);
@@ -150,7 +150,7 @@ const App = () => {
       accountNumber,
       sequence
     );
-    const res = await signAmino(ethProvider, ethAddress, signDoc);
+    const res = await signEip191(ethProvider, ethAddress, signDoc);
     return res;
   };
 
