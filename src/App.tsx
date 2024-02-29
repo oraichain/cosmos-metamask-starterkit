@@ -5,7 +5,7 @@ import { fromBase64, fromHex, toHex, toUtf8 } from '@cosmjs/encoding';
 import { keccak256, ripemd160, sha256 } from '@cosmjs/crypto';
 import * as secp256k1 from '@noble/secp256k1';
 import bech32 from 'bech32';
-import { AminoSignResponse, StdSignDoc, coins, encodeSecp256k1Pubkey, encodeSecp256k1Signature, makeSignDoc } from '@cosmjs/amino';
+import { AminoSignResponse, StdSignDoc, coins, encodeSecp256k1Pubkey, encodeSecp256k1Signature, makeSignDoc, serializeSignDoc } from '@cosmjs/amino';
 import { AminoMsgSend, StargateClient, AminoTypes, calculateFee, createDefaultAminoConverters, defaultRegistryTypes as defaultStargateTypes } from '@cosmjs/stargate';
 import { createWasmAminoConverters, wasmTypes } from '@cosmjs/cosmwasm-stargate';
 import { TxRaw } from 'cosmjs-types/cosmos/tx/v1beta1/tx';
@@ -13,37 +13,12 @@ import { Registry, TxBodyEncodeObject, encodePubkey, makeAuthInfoBytes } from '@
 import { SignMode } from 'cosmjs-types/cosmos/tx/signing/v1beta1/signing';
 import { Int53 } from '@cosmjs/math';
 
-export function sortObject(obj: any): any {
-  if (typeof obj !== 'object' || obj === null) {
-    return obj;
-  }
-  if (Array.isArray(obj)) {
-    return obj.map(sortObject);
-  }
-  const sortedKeys = Object.keys(obj).sort();
-  const result: Record<string, any> = {};
-  // NOTE: Use forEach instead of reduce for performance with large objects eg Wasm code
-  sortedKeys.forEach((key) => {
-    result[key] = sortObject(obj[key]);
-  });
-  return result;
-}
-
-/** Returns a JSON string with objects sorted by key, used for pretty Amino EIP191 signing */
-function prettyJsonSortedStringify(obj: any): string {
-  return JSON.stringify(sortObject(obj), null, 4);
-}
-
-function prettySerializeStdSignDoc(signDoc: StdSignDoc): Uint8Array {
-  return toUtf8(prettyJsonSortedStringify(signDoc));
-}
-
 function pubkeyToAddress(pubkey: Uint8Array, prefix: string = 'orai'): string {
   return bech32.encode(prefix, bech32.toWords(ripemd160(sha256(pubkey))));
 }
 
 const signAmino = async (ethProvider: any, ethAddress: string, signDoc: StdSignDoc): Promise<AminoSignResponse> => {
-  const rawMsg = prettySerializeStdSignDoc(signDoc);
+  const rawMsg = serializeSignDoc(signDoc);
   const msgToSign = `0x${toHex(rawMsg)}`;
   console.log('msgToSign', msgToSign);
   const sigResult: string = await ethProvider.request({
