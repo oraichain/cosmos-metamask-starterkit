@@ -106,7 +106,7 @@ const App = () => {
       const provider = await detectEthereumProvider({ silent: true });
       setHasProvider(Boolean(provider));
 
-      const balance = await client.getBalance('orai1cnza7u4g9nwl5algvjfzwdlry2gk8andwgh4q8', 'orai').catch(() => {
+      const balance = await client.getBalance('orai1jzgs4ws43pzphn7gqtkg03c53jpllkqm0jakq4', 'orai').catch(() => {
         return { amount: '0', denom: 'orai' };
       });
       setTargetBalance(balance);
@@ -164,7 +164,7 @@ const App = () => {
           type: 'cosmos-sdk/MsgSend',
           value: {
             from_address: cosmosAddress,
-            to_address: 'orai1cnza7u4g9nwl5algvjfzwdlry2gk8andwgh4q8',
+            to_address: cosmosAddress,
             amount: coins(amount, 'orai')
           }
         } as AminoMsgSend
