@@ -5,14 +5,14 @@ import { fromBase64, fromHex, toHex, toUtf8 } from '@cosmjs/encoding';
 import { keccak256, ripemd160, sha256 } from '@cosmjs/crypto';
 import * as secp256k1 from '@noble/secp256k1';
 import bech32 from 'bech32';
-import { AminoSignResponse, StdSignDoc, coins, encodeSecp256k1Pubkey, encodeSecp256k1Signature } from '@cosmjs/amino';
+import { AminoSignResponse, StdSignDoc, coins, encodeSecp256k1Pubkey, encodeSecp256k1Signature, makeSignDoc } from '@cosmjs/amino';
 import { AminoMsgSend, AminoTypes, createDefaultAminoConverters,  defaultRegistryTypes as defaultStargateTypes } from '@cosmjs/stargate';
 import { CosmWasmClient, createWasmAminoConverters, wasmTypes } from '@cosmjs/cosmwasm-stargate';
 import { TxRaw } from 'cosmjs-types/cosmos/tx/v1beta1/tx';
 import { Registry, TxBodyEncodeObject, encodePubkey, makeAuthInfoBytes } from '@cosmjs/proto-signing';
 import { SignMode } from 'cosmjs-types/cosmos/tx/signing/v1beta1/signing';
 import { Int53 } from '@cosmjs/math';
-import {  connectComet } from '@cosmjs/tendermint-rpc';
+import {  Tendermint37Client} from '@cosmjs/tendermint-rpc';
 
 export function sortObject(obj: any): any {
   if (typeof obj !== 'object' || obj === null) {
@@ -46,6 +46,7 @@ function pubkeyToAddress(pubkey: Uint8Array, prefix: string = 'orai'): string {
 const signAmino = async (ethProvider: any, ethAddress: string, signDoc: StdSignDoc): Promise<AminoSignResponse> => {
   const rawMsg = prettySerializeStdSignDoc(signDoc);
   const msgToSign = `0x${toHex(rawMsg)}`;
+  console.log('msgToSign', msgToSign)
   const sigResult: string = await ethProvider.request({
     method: 'personal_sign',
     params: [msgToSign, ethAddress]
@@ -146,6 +147,7 @@ const App = () => {
     }))!.toString();
 
     setPubkey(getPubkey(rawMsg, sigResult));
+    console.log('showOraipubkey', getPubkey(rawMsg, sigResult))
     setCosmosAddress(pubkeyToAddress(getPubkey(rawMsg, sigResult)));
 
     const client = await CosmWasmClient.connect("http://localhost:26657/")
@@ -159,15 +161,7 @@ const App = () => {
     const client = await CosmWasmClient.connect("http://localhost:26657/")
     const { accountNumber, sequence } = await client.getSequence(cosmosAddress);
     const chainId = await client.getChainId();
-    const signDoc: StdSignDoc = {
-      chain_id: chainId,
-      account_number: accountNumber.toString(), // Must be 0
-      sequence: sequence.toString(), // Must be 0
-      fee: {
-        amount: coins('1000', 'orai'),
-        gas: '1000000' // Must be 1
-      },
-      msgs: [
+    const signDoc =  makeSignDoc([
         {
           type: 'cosmos-sdk/MsgSend',
           value: {
@@ -176,9 +170,10 @@ const App = () => {
             amount: coins(amount, 'orai')
           }
         } as AminoMsgSend 
-      ],
-      memo: ''
-    };
+      ], {
+        amount: coins('1000', 'orai'),
+        gas: '1000000' // Must be 1
+      }, chainId, 'memo',accountNumber, sequence);
     const res = await signAmino(ethProvider, ethAddress, signDoc);
     return res;
   };
@@ -191,14 +186,16 @@ const App = () => {
 
   const transferOrai = async() => {
     const {signed, signature} =  await signTransferMessage();
-    console.log(signature.signature);
-
+    // const any_pub_key = signature.pub_key;
+    if(!pubkey) {
+      throw new Error('Pubkey is required')
+    }
+    const any_pub_key = encodePubkey(encodeSecp256k1Pubkey(pubkey));
     if(!aminoTypes || !registry) {
       throw new Error('AminoTypes and Registry are required')
     }
 
     const signMode = SignMode.SIGN_MODE_EIP_191;
-
     const signedTxBody: TxBodyEncodeObject = {
       typeUrl: "/cosmos.tx.v1beta1.TxBody",
       value: {
@@ -212,10 +209,8 @@ const App = () => {
     if(!pubkey) {
       throw new Error('Pubkey is required')
     }
-    const any_pubkey = encodePubkey(encodeSecp256k1Pubkey(pubkey));
-
     const signedAuthInfoBytes = makeAuthInfoBytes(
-      [{ pubkey:any_pubkey, sequence: signedSequence }],
+      [{ pubkey: any_pub_key, sequence: signedSequence }],
       signed.fee.amount,
       signedGasLimit,
       signed.fee.granter,
@@ -228,7 +223,7 @@ const App = () => {
       signatures: [fromBase64(signature.signature)],
     });
     const txBytes = TxRaw.encode(txRaw).finish();
-    const commet = await connectComet("http://localhost:26657/")
+    const commet = await Tendermint37Client.connect("http://localhost:26657/");
     const response = await commet.broadcastTxSync({ tx:txBytes });
     console.log(response)
   }
