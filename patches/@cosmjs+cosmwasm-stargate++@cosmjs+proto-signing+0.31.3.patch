@@ -1,0 +1,18 @@
+diff --git a/node_modules/@cosmjs/cosmwasm-stargate/node_modules/@cosmjs/proto-signing/build/signer.js b/node_modules/@cosmjs/cosmwasm-stargate/node_modules/@cosmjs/proto-signing/build/signer.js
+index 5f3b8ee..ac9cec5 100644
+--- a/node_modules/@cosmjs/cosmwasm-stargate/node_modules/@cosmjs/proto-signing/build/signer.js
++++ b/node_modules/@cosmjs/cosmwasm-stargate/node_modules/@cosmjs/proto-signing/build/signer.js
+@@ -1,8 +1,13 @@
+ "use strict";
+ Object.defineProperty(exports, "__esModule", { value: true });
+ exports.isOfflineDirectSigner = void 0;
++exports.isOfflineEip191Signer = void 0;
+ function isOfflineDirectSigner(signer) {
+     return signer.signDirect !== undefined;
+ }
++function isOfflineEip191Signer(signer) {
++    return signer.signEip191 !== undefined;
++}
+ exports.isOfflineDirectSigner = isOfflineDirectSigner;
++exports.isOfflineEip191Signer = isOfflineEip191Signer;
+ //# sourceMappingURL=signer.js.map

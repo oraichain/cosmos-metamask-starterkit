@@ -1,0 +1,18 @@
+diff --git a/node_modules/@cosmjs/cosmwasm-stargate/build/signingcosmwasmclient.js b/node_modules/@cosmjs/cosmwasm-stargate/build/signingcosmwasmclient.js
+index 646bbe7..d40bfcb 100644
+--- a/node_modules/@cosmjs/cosmwasm-stargate/build/signingcosmwasmclient.js
++++ b/node_modules/@cosmjs/cosmwasm-stargate/build/signingcosmwasmclient.js
+@@ -393,7 +393,12 @@ class SigningCosmWasmClient extends cosmwasmclient_1.CosmWasmClient {
+             throw new Error("Failed to retrieve account from signer");
+         }
+         const pubkey = (0, proto_signing_1.encodePubkey)((0, amino_1.encodeSecp256k1Pubkey)(accountFromSigner.pubkey));
+-        const signMode = signing_1.SignMode.SIGN_MODE_LEGACY_AMINO_JSON;
++        let signMode;
++        if(this.signer.signEip191){
++            signMode = signing_1.SignMode.SIGN_MODE_EIP_191;
++        }else {
++            signMode = signing_1.SignMode.SIGN_MODE_LEGACY_AMINO_JSON;
++        }
+         const msgs = messages.map((msg) => this.aminoTypes.toAmino(msg));
+         const signDoc = (0, amino_1.makeSignDoc)(msgs, fee, chainId, memo, accountNumber, sequence);
+         const { signature, signed } = await this.signer.signAmino(signerAddress, signDoc);
